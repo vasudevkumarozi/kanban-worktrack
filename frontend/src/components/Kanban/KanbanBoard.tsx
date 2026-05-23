@@ -26,7 +26,7 @@ export default function KanbanBoard({ project }: Props) {
 
   const { data: fetchedTasks = [] } = useQuery<Task[]>({
     queryKey: ['tasks', project.id],
-    queryFn: () => api.get(`/tasks/project/${project.id}`).then(r => r.data),
+    queryFn: () => api.get(`/tasks/project/${project.id}?limit=500`).then(r => r.data.tasks ?? r.data),
   });
 
   useEffect(() => { setTasks(fetchedTasks); }, [fetchedTasks]);
