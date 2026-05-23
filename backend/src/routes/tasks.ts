@@ -17,12 +17,22 @@ const TASK_INCLUDE = {
 } as const;
 
 router.get('/project/:projectId', asyncHandler(async (req: AuthRequest, res: Response) => {
-  const tasks = await prisma.task.findMany({
-    where: { projectId: req.params.projectId },
-    include: TASK_INCLUDE,
-    orderBy: [{ columnId: 'asc' }, { order: 'asc' }],
-  });
-  res.json(tasks);
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit as string) || 200, 500);
+  const skip = (page - 1) * limit;
+
+  const [tasks, total] = await Promise.all([
+    prisma.task.findMany({
+      where: { projectId: req.params.projectId },
+      include: TASK_INCLUDE,
+      orderBy: [{ columnId: 'asc' }, { order: 'asc' }],
+      skip,
+      take: limit,
+    }),
+    prisma.task.count({ where: { projectId: req.params.projectId } }),
+  ]);
+
+  res.json({ tasks, total, page, limit, pages: Math.ceil(total / limit) });
 }));
 
 router.get('/my', asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -176,6 +186,7 @@ router.get('/:id/comments', asyncHandler(async (req: AuthRequest, res: Response)
 router.post('/:id/comments', asyncHandler(async (req: AuthRequest, res: Response) => {
   const { content, mentionedUserIds } = req.body as { content?: string; mentionedUserIds?: string[] };
   if (!content?.trim()) throw new ValidationError('Comment content is required');
+  if (content.length > 5000) throw new ValidationError('Comment cannot exceed 5000 characters');
 
   const comment = await prisma.comment.create({
     data: { content: content.trim(), taskId: req.params.id, userId: req.user!.id },

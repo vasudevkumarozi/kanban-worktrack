@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { ForbiddenError } from '../lib/errors';
+import { sendWeeklyDigest } from '../services/emailDigest';
 
 const router = Router();
 router.use(authenticate);
@@ -112,19 +113,36 @@ router.get('/daily', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (
   const days = Math.min(parseInt(req.query.days as string) || 14, 90);
   const userId = req.query.userId as string | undefined;
 
-  const results: { date: string; assigned: number; completed: number }[] = [];
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0);
+
+  // Two aggregation queries instead of 2×N
+  const userJoin = userId
+    ? 'JOIN TaskAssignee ta ON ta.taskId = t.id AND ta.userId = ?' : '';
+  const params = userId ? [since, userId, since, userId] : [since, since];
+
+  const [createdRows, completedRows] = await Promise.all([
+    prisma.$queryRawUnsafe<{ date: string; count: bigint }[]>(
+      `SELECT DATE(t.createdAt) as date, COUNT(*) as count FROM Task t ${userJoin} WHERE t.createdAt >= ? GROUP BY DATE(t.createdAt)`,
+      ...(userId ? [since, userId] : [since])
+    ),
+    prisma.$queryRawUnsafe<{ date: string; count: bigint }[]>(
+      `SELECT DATE(t.completedAt) as date, COUNT(*) as count FROM Task t ${userJoin} WHERE t.completedAt >= ? GROUP BY DATE(t.completedAt)`,
+      ...(userId ? [since, userId] : [since])
+    ),
+  ]);
+
+  void params; // unused when using spread above
+  const createdMap = new Map(createdRows.map(r => [r.date, Number(r.count)]));
+  const completedMap = new Map(completedRows.map(r => [r.date, Number(r.count)]));
+
+  const results = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const start = new Date(d); start.setHours(0, 0, 0, 0);
-    const end = new Date(d); end.setHours(23, 59, 59, 999);
-    const userFilter = userId ? { assignees: { some: { userId } } } : {};
-
-    const [assigned, completed] = await Promise.all([
-      prisma.task.count({ where: { ...userFilter, createdAt: { gte: start, lte: end } } }),
-      prisma.task.count({ where: { ...userFilter, completedAt: { gte: start, lte: end } } }),
-    ]);
-    results.push({ date: start.toISOString().split('T')[0], assigned, completed });
+    const dateStr = d.toISOString().split('T')[0];
+    results.push({ date: dateStr, assigned: createdMap.get(dateStr) ?? 0, completed: completedMap.get(dateStr) ?? 0 });
   }
   res.json(results);
 }));
@@ -199,19 +217,32 @@ router.get('/completion-trend', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHand
   const days = Math.min(parseInt(req.query.days as string) || 30, 90);
   const projectId = req.query.projectId as string | undefined;
 
-  const results: { date: string; created: number; completed: number }[] = [];
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0);
+
+  const projectFilter = projectId ? 'AND projectId = ?' : '';
+
+  const [createdRows, completedRows] = await Promise.all([
+    prisma.$queryRawUnsafe<{ date: string; count: bigint }[]>(
+      `SELECT DATE(createdAt) as date, COUNT(*) as count FROM Task WHERE createdAt >= ? ${projectFilter} GROUP BY DATE(createdAt)`,
+      ...(projectId ? [since, projectId] : [since])
+    ),
+    prisma.$queryRawUnsafe<{ date: string; count: bigint }[]>(
+      `SELECT DATE(completedAt) as date, COUNT(*) as count FROM Task WHERE completedAt >= ? ${projectFilter} GROUP BY DATE(completedAt)`,
+      ...(projectId ? [since, projectId] : [since])
+    ),
+  ]);
+
+  const createdMap = new Map(createdRows.map(r => [r.date, Number(r.count)]));
+  const completedMap = new Map(completedRows.map(r => [r.date, Number(r.count)]));
+
+  const results = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const start = new Date(d); start.setHours(0, 0, 0, 0);
-    const end = new Date(d); end.setHours(23, 59, 59, 999);
-    const where = projectId ? { projectId } : {};
-
-    const [created, completed] = await Promise.all([
-      prisma.task.count({ where: { ...where, createdAt: { gte: start, lte: end } } }),
-      prisma.task.count({ where: { ...where, completedAt: { gte: start, lte: end } } }),
-    ]);
-    results.push({ date: start.toISOString().split('T')[0], created, completed });
+    const dateStr = d.toISOString().split('T')[0];
+    results.push({ date: dateStr, created: createdMap.get(dateStr) ?? 0, completed: completedMap.get(dateStr) ?? 0 });
   }
   res.json(results);
 }));
@@ -258,6 +289,11 @@ router.get('/reports/data', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(
     completedAt: t.completedAt ? new Date(t.completedAt).toISOString().split('T')[0] : '',
     createdAt: new Date(t.createdAt).toISOString().split('T')[0],
   })));
+}));
+
+router.post('/test-email', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (_req: AuthRequest, res: Response) => {
+  await sendWeeklyDigest();
+  res.json({ message: 'Test email sent — check your inbox' });
 }));
 
 export default router;

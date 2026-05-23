@@ -40,7 +40,7 @@ router.post('/login', authLimiter, validate(loginSchema), asyncHandler(async (re
   const token = jwt.sign(
     { id: user.id, role: user.role, email: user.email },
     process.env.JWT_SECRET!,
-    { expiresIn: '7d' },
+    { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'] },
   );
 
   logger.info('User logged in', { userId: user.id, role: user.role });
@@ -71,7 +71,7 @@ router.post('/google', authLimiter, validate(googleSchema), asyncHandler(async (
   }
   if (!user.isActive) throw new ForbiddenError('Account is disabled');
 
-  const token = jwt.sign({ id: user.id, role: user.role, email: user.email }, process.env.JWT_SECRET!, { expiresIn: '7d' });
+  const token = jwt.sign({ id: user.id, role: user.role, email: user.email }, process.env.JWT_SECRET!, { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'] });
   const { password: _, ...safe } = user;
   res.json({ token, user: safe });
 }));

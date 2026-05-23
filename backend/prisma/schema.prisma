@@ -104,6 +104,13 @@ model Task {
   activityLogs ActivityLog[]
   subtasks     Subtask[]
   attachments  Attachment[]
+
+  @@index([projectId])
+  @@index([columnId])
+  @@index([sprintId])
+  @@index([completedAt])
+  @@index([dueDate])
+  @@index([createdAt])
 }
 
 model Subtask {
@@ -117,6 +124,8 @@ model Subtask {
 
   task     Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
   assignee User? @relation("SubtaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([taskId])
 }
 
 model Attachment {
@@ -166,6 +175,8 @@ model Comment {
 
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
 }
 
 model Notification {
@@ -179,6 +190,9 @@ model Notification {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }
 
 model ActivityLog {
@@ -194,4 +208,8 @@ model ActivityLog {
 
   user User  @relation(fields: [userId], references: [id])
   task Task? @relation(fields: [taskId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
+  @@index([createdAt])
 }
