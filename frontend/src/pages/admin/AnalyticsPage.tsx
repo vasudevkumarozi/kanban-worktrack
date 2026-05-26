@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart2, TrendingUp, Clock, CheckCircle, User } from 'lucide-react';
+import { BarChart2, TrendingUp, Clock, CheckCircle, User, Calendar, X } from 'lucide-react';
 import api from '../../api/client';
 import Header from '../../components/Layout/Header';
 import { EmployeeStats } from '../../types';
@@ -10,35 +10,60 @@ type Period = 'week' | 'month' | 'all';
 
 interface DailyPoint { date: string; assigned: number; completed: number }
 
-function DailyChart({ data, userId }: { data: DailyPoint[]; userId?: string }) {
+function DailyChart({
+  data,
+  selectedDate,
+  onSelectDate,
+}: {
+  data: DailyPoint[];
+  selectedDate?: string;
+  onSelectDate?: (date: string) => void;
+}) {
   const maxVal = Math.max(...data.map(d => Math.max(d.assigned, d.completed)), 1);
 
   return (
     <div className="overflow-x-auto">
       <div className="flex items-end gap-1 min-w-max h-40 px-2">
-        {data.map(d => (
-          <div key={d.date} className="flex flex-col items-center gap-0.5 group">
-            <div className="relative flex items-end gap-0.5 h-32">
-              <div
-                className="w-4 bg-primary-400 rounded-t transition-all group-hover:bg-primary-500"
-                style={{ height: `${(d.assigned / maxVal) * 100}%`, minHeight: d.assigned > 0 ? '4px' : '0' }}
-                title={`Assigned: ${d.assigned}`}
-              />
-              <div
-                className="w-4 bg-emerald-400 rounded-t transition-all group-hover:bg-emerald-500"
-                style={{ height: `${(d.completed / maxVal) * 100}%`, minHeight: d.completed > 0 ? '4px' : '0' }}
-                title={`Completed: ${d.completed}`}
-              />
+        {data.map(d => {
+          const isSelected = selectedDate === d.date;
+          return (
+            <div
+              key={d.date}
+              className={`flex flex-col items-center gap-0.5 group cursor-pointer rounded transition-all px-0.5 ${
+                isSelected ? 'bg-primary-50 ring-2 ring-primary-400' : 'hover:bg-gray-50'
+              }`}
+              onClick={() => onSelectDate?.(isSelected ? '' : d.date)}
+              title={`${format(new Date(d.date), 'MMM d')} — Click to view day details`}
+            >
+              <div className="relative flex items-end gap-0.5 h-32 pt-1">
+                <div
+                  className={`w-4 rounded-t transition-all ${isSelected ? 'bg-primary-600' : 'bg-primary-400 group-hover:bg-primary-500'}`}
+                  style={{ height: `${(d.assigned / maxVal) * 100}%`, minHeight: d.assigned > 0 ? '4px' : '0' }}
+                  title={`Assigned: ${d.assigned}`}
+                />
+                <div
+                  className={`w-4 rounded-t transition-all ${isSelected ? 'bg-emerald-600' : 'bg-emerald-400 group-hover:bg-emerald-500'}`}
+                  style={{ height: `${(d.completed / maxVal) * 100}%`, minHeight: d.completed > 0 ? '4px' : '0' }}
+                  title={`Completed: ${d.completed}`}
+                />
+              </div>
+              <span className={`text-xs rotate-45 origin-left translate-y-3 translate-x-1 whitespace-nowrap ${isSelected ? 'text-primary-600 font-semibold' : 'text-gray-400'}`}>
+                {format(new Date(d.date), 'MMM d')}
+              </span>
             </div>
-            <span className="text-xs text-gray-400 rotate-45 origin-left translate-y-3 translate-x-1 whitespace-nowrap">
-              {format(new Date(d.date), 'MMM d')}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <div className="flex items-center gap-4 mt-8 px-2">
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-primary-400" /><span className="text-xs text-gray-500">Assigned</span></div>
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-400" /><span className="text-xs text-gray-500">Completed</span></div>
+      <div className="flex items-center gap-4 mt-8 px-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded bg-primary-400" />
+          <span className="text-xs text-gray-500">Assigned</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded bg-emerald-400" />
+          <span className="text-xs text-gray-500">Completed</span>
+        </div>
+        <span className="text-xs text-gray-400 ml-1">· Click any bar to view day details</span>
       </div>
     </div>
   );
@@ -49,6 +74,13 @@ const priorityColors: Record<string, string> = {
   MEDIUM: 'bg-blue-400',
   HIGH: 'bg-orange-400',
   CRITICAL: 'bg-red-500',
+};
+
+const priorityBadgeColors: Record<string, string> = {
+  LOW: 'bg-gray-100 text-gray-600',
+  MEDIUM: 'bg-blue-100 text-blue-700',
+  HIGH: 'bg-orange-100 text-orange-700',
+  CRITICAL: 'bg-red-100 text-red-700',
 };
 
 function StatCard({ label, value, icon: Icon, color }: { label: string; value: number; icon: React.ElementType; color: string }) {
@@ -75,11 +107,182 @@ function ProgressBar({ value, max, color = 'bg-primary-500' }: { value: number; 
   );
 }
 
+function DayAnalyticsPanel({
+  data,
+  onClose,
+  isLoading,
+}: {
+  data: any;
+  onClose: () => void;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return (
+      <div className="card">
+        <div className="flex items-center gap-2 text-gray-400 py-6 justify-center">
+          <Calendar size={16} />
+          <span className="text-sm">Loading day analytics…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const formattedDate = format(new Date(data.date + 'T12:00:00'), 'EEEE, MMMM d, yyyy');
+
+  return (
+    <div className="card border-l-4 border-primary-400">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center">
+            <Calendar size={16} className="text-primary-600" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-base">{formattedDate}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Day-wise analytics</p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+          title="Close"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="bg-primary-50 rounded-xl p-4 text-center">
+          <p className="text-3xl font-bold text-primary-600">{data.assigned}</p>
+          <p className="text-xs text-primary-500 mt-1">Tasks Assigned</p>
+        </div>
+        <div className="bg-emerald-50 rounded-xl p-4 text-center">
+          <p className="text-3xl font-bold text-emerald-600">{data.completed}</p>
+          <p className="text-xs text-emerald-500 mt-1">Tasks Completed</p>
+        </div>
+      </div>
+
+      {data.assigned === 0 && data.completed === 0 ? (
+        <p className="text-center text-gray-400 text-sm py-6">No task activity recorded on this day</p>
+      ) : (
+        <>
+          {/* Employee breakdown (shown when viewing all employees) */}
+          {data.employeeBreakdown && data.employeeBreakdown.length > 0 && (
+            <div className="mb-5">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">Employee Breakdown</h4>
+              <div className="space-y-2">
+                {data.employeeBreakdown.map((emp: any) => (
+                  <div key={emp.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                      {emp.name.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{emp.name}</p>
+                      <p className="text-xs text-gray-400">{emp.department || 'No dept.'}</p>
+                    </div>
+                    <div className="flex gap-5 shrink-0">
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-blue-600">{emp.assigned}</p>
+                        <p className="text-xs text-gray-400">Assigned</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-green-600">{emp.completed}</p>
+                        <p className="text-xs text-gray-400">Completed</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Task lists */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Assigned tasks */}
+            <div>
+              <h4 className="text-sm font-semibold text-primary-600 mb-2">
+                Assigned on this day
+                <span className="ml-1.5 text-xs font-normal bg-primary-100 text-primary-600 px-1.5 py-0.5 rounded-full">
+                  {data.assignedTasks.length}
+                </span>
+              </h4>
+              {data.assignedTasks.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">
+                  No tasks assigned
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {data.assignedTasks.map((task: any) => (
+                    <div key={task.id} className="p-2.5 border border-gray-100 rounded-lg hover:border-gray-200 transition-colors">
+                      <div className="flex items-start gap-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 mt-0.5 ${priorityBadgeColors[task.priority] || 'bg-gray-100 text-gray-600'}`}>
+                          {task.priority}
+                        </span>
+                        <p className="text-sm text-gray-800 leading-snug">{task.title}</p>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-400 flex items-center gap-1 pl-0.5">
+                        {task.project?.name && <span>{task.project.name}</span>}
+                        {task.assignees?.length > 0 && (
+                          <span>· {task.assignees.map((a: any) => a.user.name).join(', ')}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Completed tasks */}
+            <div>
+              <h4 className="text-sm font-semibold text-emerald-600 mb-2">
+                Completed on this day
+                <span className="ml-1.5 text-xs font-normal bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full">
+                  {data.completedTasks.length}
+                </span>
+              </h4>
+              {data.completedTasks.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">
+                  No tasks completed
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {data.completedTasks.map((task: any) => (
+                    <div key={task.id} className="p-2.5 border border-emerald-100 rounded-lg bg-emerald-50/40 hover:border-emerald-200 transition-colors">
+                      <div className="flex items-start gap-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 mt-0.5 ${priorityBadgeColors[task.priority] || 'bg-gray-100 text-gray-600'}`}>
+                          {task.priority}
+                        </span>
+                        <p className="text-sm text-gray-800 leading-snug">{task.title}</p>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-400 flex items-center gap-1 pl-0.5">
+                        {task.project?.name && <span>{task.project.name}</span>}
+                        {task.assignees?.length > 0 && (
+                          <span>· {task.assignees.map((a: any) => a.user.name).join(', ')}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AdminAnalyticsPage() {
   const [period, setPeriod] = useState<Period>('month');
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [dailyDays, setDailyDays] = useState(14);
   const [dailyUser, setDailyUser] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+
+  const today = new Date().toISOString().split('T')[0];
 
   const { data: overview } = useQuery({
     queryKey: ['analytics-overview', period],
@@ -100,6 +303,12 @@ export default function AdminAnalyticsPage() {
   const { data: dailyData = [] } = useQuery<DailyPoint[]>({
     queryKey: ['analytics-daily', dailyDays, dailyUser],
     queryFn: () => api.get(`/analytics/daily?days=${dailyDays}${dailyUser ? `&userId=${dailyUser}` : ''}`).then(r => r.data),
+  });
+
+  const { data: dayDetails, isLoading: dayLoading } = useQuery({
+    queryKey: ['analytics-day', selectedDate, dailyUser],
+    queryFn: () => api.get(`/analytics/day?date=${selectedDate}${dailyUser ? `&userId=${dailyUser}` : ''}`).then(r => r.data),
+    enabled: !!selectedDate,
   });
 
   const periods: { key: Period; label: string }[] = [
@@ -146,14 +355,53 @@ export default function AdminAnalyticsPage() {
                   {d}d
                 </button>
               ))}
+
+              {/* Calendar date picker */}
+              <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1 bg-white">
+                <Calendar size={14} className="text-gray-400 shrink-0" />
+                <input
+                  type="date"
+                  max={today}
+                  value={selectedDate}
+                  onChange={e => setSelectedDate(e.target.value)}
+                  className="text-sm text-gray-700 outline-none bg-transparent cursor-pointer"
+                  title="Pick a date to view day analytics"
+                />
+                {selectedDate && (
+                  <button
+                    onClick={() => setSelectedDate('')}
+                    className="text-gray-400 hover:text-gray-600 transition-colors ml-0.5"
+                    title="Clear date"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedDate(today)}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${selectedDate === today ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                title="View today's analytics"
+              >
+                Today
+              </button>
             </div>
           </div>
+
           {dailyData.every(d => d.assigned === 0 && d.completed === 0) ? (
             <p className="text-sm text-gray-400 text-center py-8">No task activity in this period</p>
           ) : (
-            <DailyChart data={dailyData} />
+            <DailyChart data={dailyData} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
           )}
         </div>
+
+        {/* Day Analytics Panel */}
+        {(selectedDate || dayLoading) && (
+          <DayAnalyticsPanel
+            data={dayDetails}
+            onClose={() => setSelectedDate('')}
+            isLoading={dayLoading}
+          />
+        )}
 
         {overview && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
