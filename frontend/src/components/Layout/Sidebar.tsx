@@ -27,9 +27,7 @@ export default function Sidebar() {
     <aside className="w-64 bg-gray-900 text-white flex flex-col h-screen sticky top-0">
       <div className="p-6 border-b border-gray-800">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
-            <FolderKanban size={18} />
-          </div>
+          <img src="/logo.png" alt="Company Logo" className="w-8 h-8 rounded-lg object-contain" />
           <span className="font-bold text-lg">WorkTrack</span>
         </div>
       </div>
