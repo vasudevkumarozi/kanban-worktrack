@@ -147,6 +147,62 @@ router.get('/daily', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (
   res.json(results);
 }));
 
+router.get('/day', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
+  const date = req.query.date as string;
+  const userId = req.query.userId as string | undefined;
+
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: 'Valid date parameter required (YYYY-MM-DD)' });
+    return;
+  }
+
+  const parts = date.split('-').map(Number);
+  const dayStart = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  const dayEnd   = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
+
+  const userFilter = userId ? { assignees: { some: { userId } } } : {};
+
+  const taskSelect = {
+    id: true, title: true, priority: true, completedAt: true, dueDate: true, createdAt: true,
+    project:  { select: { name: true } },
+    column:   { select: { name: true } },
+    assignees: { select: { user: { select: { id: true, name: true } } } },
+  };
+
+  const [assignedTasks, completedTasks] = await Promise.all([
+    prisma.task.findMany({
+      where: { createdAt: { gte: dayStart, lte: dayEnd }, ...userFilter },
+      select: taskSelect,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }),
+    prisma.task.findMany({
+      where: { completedAt: { gte: dayStart, lte: dayEnd }, ...userFilter },
+      select: taskSelect,
+      orderBy: { completedAt: 'desc' },
+      take: 100,
+    }),
+  ]);
+
+  let employeeBreakdown = null;
+  if (!userId) {
+    const employees = await prisma.user.findMany({
+      where: { role: 'EMPLOYEE', isActive: true },
+      select: { id: true, name: true, department: true },
+      orderBy: { name: 'asc' },
+    });
+    employeeBreakdown = employees
+      .map(emp => ({
+        ...emp,
+        assigned:  assignedTasks.filter((t: any) => t.assignees.some((a: any) => a.user.id === emp.id)).length,
+        completed: completedTasks.filter((t: any) => t.assignees.some((a: any) => a.user.id === emp.id)).length,
+      }))
+      .filter(e => e.assigned > 0 || e.completed > 0);
+  }
+
+  res.json({ date, assigned: assignedTasks.length, completed: completedTasks.length, assignedTasks, completedTasks, employeeBreakdown });
+}));
+
 router.get('/project/:projectId', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
   const period = (req.query.period as string) || 'month';
   const { start, end } = getRange(period);
