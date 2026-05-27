@@ -36,7 +36,9 @@ function cookieOpts(maxAgeMs: number) {
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: (isProd ? 'strict' : 'lax') as 'strict' | 'lax',
+    // 'none' required for cross-origin (Vercel frontend ↔ Render backend).
+    // 'none' mandates secure:true (HTTPS), which is always true in production.
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
     maxAge: maxAgeMs,
     path: '/',
   };
