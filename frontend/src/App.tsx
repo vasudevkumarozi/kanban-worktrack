@@ -37,20 +37,19 @@ function RequireRole({ roles, children }: { roles: string[]; children: React.Rea
 }
 
 export default function App() {
-  const { setUser, setAccessToken } = useAuthStore();
+  const { setUser } = useAuthStore();
 
   useEffect(() => {
     // On mount, try to restore the session from the httpOnly cookie.
-    // The client.ts interceptor will automatically attempt /auth/refresh if
-    // the access token has expired but a valid refresh token cookie exists.
+    // The interceptor transparently calls /auth/refresh if the access token
+    // has expired — do NOT call /auth/refresh explicitly here because it would
+    // race with the interceptor's own refresh attempt and cause a double-rotation
+    // (second caller gets "token already used" 401 → logout → redirect to /login).
+    // Socket.io authenticates via the httpOnly cookie (withCredentials: true),
+    // so no in-memory token is needed on page load.
     api.get<{ accessToken?: string }>('/auth/me')
       .then((r) => setUser(r.data as any))
       .catch(() => setUser(null));
-
-    // Also restore in-memory access token for socket.io via refresh endpoint
-    api.post<{ accessToken: string }>('/auth/refresh')
-      .then((r) => setAccessToken(r.data.accessToken))
-      .catch(() => {}); // silent — user just won't have socket token until next login
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
