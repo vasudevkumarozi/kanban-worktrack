@@ -32,13 +32,14 @@ const googleSchema = z.object({
 // ── Cookie helpers ────────────────────────────────────────────────────────────
 
 function cookieOpts(maxAgeMs: number) {
-  const isProd = process.env.NODE_ENV === 'production';
+  // Render does not set NODE_ENV automatically — also check the RENDER env var
+  // which Render injects on every service. Without this, isProd=false and
+  // sameSite='lax' blocks cross-origin cookies (Vercel → Render).
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
   return {
     httpOnly: true,
-    secure: isProd,
-    // 'none' required for cross-origin (Vercel frontend ↔ Render backend).
-    // 'none' mandates secure:true (HTTPS), which is always true in production.
-    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+    secure: isProd,          // HTTPS only in production
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax', // 'none' = cross-origin allowed
     maxAge: maxAgeMs,
     path: '/',
   };
