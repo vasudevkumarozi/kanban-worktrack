@@ -39,7 +39,15 @@ api.interceptors.response.use(
         // Refresh itself failed → force logout
         const { useAuthStore } = await import('../store/auth.store');
         useAuthStore.getState().logout();
-        window.location.href = '/login';
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(err);
+      }
+
+      // On the login page a 401 just means "not logged in yet" — don't try to
+      // refresh (would cause unnecessary network calls and toast spam).
+      if (window.location.pathname === '/login') {
         return Promise.reject(err);
       }
 
@@ -86,7 +94,12 @@ api.interceptors.response.use(
 
     // ── 429 ───────────────────────────────────────────────────────────────
     if (status === 429) {
-      toast.error('Too many requests. Please slow down and try again.');
+      const reqUrl = (err.config as any)?.url ?? '';
+      // Suppress toast for background auth calls — user doesn't need to see these
+      const isSilent = reqUrl.includes('/auth/refresh') || reqUrl.includes('/auth/me');
+      if (!isSilent) {
+        toast.error('Too many requests. Please slow down and try again.');
+      }
       return Promise.reject(err);
     }
 
