@@ -68,7 +68,10 @@ api.interceptors.response.use(
         drainQueue(refreshErr);
         const { useAuthStore } = await import('../store/auth.store');
         useAuthStore.getState().logout();
-        window.location.href = '/login';
+        // Don't redirect if already on /login — prevents infinite reload loop
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;
