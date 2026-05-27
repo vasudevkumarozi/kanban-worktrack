@@ -4,6 +4,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { NotFoundError, ForbiddenError, ValidationError } from '../lib/errors';
 import { getIO } from '../socket';
+import { writeLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 router.use(authenticate);
@@ -17,6 +18,14 @@ const TASK_INCLUDE = {
 } as const;
 
 router.get('/project/:projectId', asyncHandler(async (req: AuthRequest, res: Response) => {
+  // Employees must be project members to view tasks
+  if (req.user!.role === 'EMPLOYEE') {
+    const member = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: req.params.projectId, userId: req.user!.id } },
+    });
+    if (!member) throw new ForbiddenError();
+  }
+
   const page = Math.max(parseInt(req.query.page as string) || 1, 1);
   const limit = Math.min(parseInt(req.query.limit as string) || 200, 500);
   const skip = (page - 1) * limit;
@@ -47,10 +56,17 @@ router.get('/my', asyncHandler(async (req: AuthRequest, res: Response) => {
 router.get('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
   const task = await prisma.task.findUnique({ where: { id: req.params.id }, include: TASK_INCLUDE });
   if (!task) throw new NotFoundError('Task');
+  // Employees can only view tasks from projects they belong to
+  if (req.user!.role === 'EMPLOYEE') {
+    const member = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: task.projectId, userId: req.user!.id } },
+    });
+    if (!member) throw new ForbiddenError();
+  }
   res.json(task);
 }));
 
-router.post('/', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
+router.post('/', writeLimiter, requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
   const { title, description, priority, projectId, columnId, assigneeIds, dueDate, estimatedHours } = req.body as {
     title?: string; description?: string; priority?: string; projectId?: string;
     columnId?: string; assigneeIds?: string[]; dueDate?: string; estimatedHours?: number;
@@ -90,7 +106,7 @@ router.post('/', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req:
   res.status(201).json(task);
 }));
 
-router.put('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+router.put('/:id', writeLimiter, asyncHandler(async (req: AuthRequest, res: Response) => {
   const current = await prisma.task.findUnique({ where: { id: req.params.id }, include: { assignees: true } });
   if (!current) throw new NotFoundError('Task');
   if (req.user!.role === 'EMPLOYEE' && !current.assignees.some(a => a.userId === req.user!.id)) throw new ForbiddenError();
@@ -134,7 +150,7 @@ router.put('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
   res.json(task);
 }));
 
-router.patch('/:id/move', asyncHandler(async (req: AuthRequest, res: Response) => {
+router.patch('/:id/move', writeLimiter, asyncHandler(async (req: AuthRequest, res: Response) => {
   const { columnId, order } = req.body as { columnId?: string; order?: number };
   if (!columnId) throw new ValidationError('columnId is required');
 
@@ -163,7 +179,7 @@ router.patch('/:id/move', asyncHandler(async (req: AuthRequest, res: Response) =
   res.json(task);
 }));
 
-router.delete('/:id', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
+router.delete('/:id', writeLimiter, requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
   const task = await prisma.task.findUnique({ where: { id: req.params.id } });
   if (!task) throw new NotFoundError('Task');
   await prisma.task.delete({ where: { id: req.params.id } });
@@ -179,11 +195,12 @@ router.get('/:id/comments', asyncHandler(async (req: AuthRequest, res: Response)
     where: { taskId: req.params.id },
     include: { user: { select: { id: true, name: true, avatar: true } } },
     orderBy: { createdAt: 'asc' },
+    take: 200,
   });
   res.json(comments);
 }));
 
-router.post('/:id/comments', asyncHandler(async (req: AuthRequest, res: Response) => {
+router.post('/:id/comments', writeLimiter, asyncHandler(async (req: AuthRequest, res: Response) => {
   const { content, mentionedUserIds } = req.body as { content?: string; mentionedUserIds?: string[] };
   if (!content?.trim()) throw new ValidationError('Comment content is required');
   if (content.length > 5000) throw new ValidationError('Comment cannot exceed 5000 characters');

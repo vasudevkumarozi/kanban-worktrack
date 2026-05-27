@@ -287,28 +287,33 @@ export default function AdminAnalyticsPage() {
   const { data: overview } = useQuery({
     queryKey: ['analytics-overview', period],
     queryFn: () => api.get(`/analytics/overview?period=${period}`).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: employees = [], isLoading } = useQuery<EmployeeStats[]>({
     queryKey: ['analytics-employees', period],
     queryFn: () => api.get(`/analytics/employees?period=${period}`).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: empDetail } = useQuery({
     queryKey: ['analytics-employee', expandedEmp, period],
     queryFn: () => api.get(`/analytics/employee/${expandedEmp}?period=${period}`).then(r => r.data),
     enabled: !!expandedEmp,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: dailyData = [] } = useQuery<DailyPoint[]>({
     queryKey: ['analytics-daily', dailyDays, dailyUser],
     queryFn: () => api.get(`/analytics/daily?days=${dailyDays}${dailyUser ? `&userId=${dailyUser}` : ''}`).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: dayDetails, isLoading: dayLoading } = useQuery({
     queryKey: ['analytics-day', selectedDate, dailyUser],
     queryFn: () => api.get(`/analytics/day?date=${selectedDate}${dailyUser ? `&userId=${dailyUser}` : ''}`).then(r => r.data),
     enabled: !!selectedDate,
+    staleTime: 5 * 60 * 1000,
   });
 
   const periods: { key: Period; label: string }[] = [

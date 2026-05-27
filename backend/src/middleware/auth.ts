@@ -7,7 +7,11 @@ export interface AuthRequest extends Request {
 }
 
 export const authenticate = (req: AuthRequest, res: Response, next: NextFunction): void => {
-  const token = req.headers.authorization?.split(' ')[1];
+  // Prefer httpOnly cookie; fall back to Authorization header for API clients / Postman
+  const token =
+    (req as any).cookies?.accessToken ??
+    req.headers.authorization?.split(' ')[1];
+
   if (!token) {
     res.status(401).json({ error: 'Authentication token required', code: 'UNAUTHORIZED' });
     return;

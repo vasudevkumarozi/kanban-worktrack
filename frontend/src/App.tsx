@@ -16,13 +16,17 @@ import MyTasksPage from './pages/dashboard/MyTasksPage';
 import ReportsPage from './pages/reports/ReportsPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token, user } = useAuthStore();
-  if (!token) return <Navigate to="/login" replace />;
-  if (!user) return (
-    <div className="flex items-center justify-center h-screen">
-      <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full" />
-    </div>
-  );
+  const { user, isLoading } = useAuthStore();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
@@ -33,13 +37,22 @@ function RequireRole({ roles, children }: { roles: string[]; children: React.Rea
 }
 
 export default function App() {
-  const { token, setAuth, logout } = useAuthStore();
+  const { setUser, setAccessToken } = useAuthStore();
 
   useEffect(() => {
-    if (token && !useAuthStore.getState().user) {
-      api.get('/auth/me').then((r) => setAuth(r.data, token)).catch(() => logout());
-    }
-  }, [token]);
+    // On mount, try to restore the session from the httpOnly cookie.
+    // The client.ts interceptor will automatically attempt /auth/refresh if
+    // the access token has expired but a valid refresh token cookie exists.
+    api.get<{ accessToken?: string }>('/auth/me')
+      .then((r) => setUser(r.data as any))
+      .catch(() => setUser(null));
+
+    // Also restore in-memory access token for socket.io via refresh endpoint
+    api.post<{ accessToken: string }>('/auth/refresh')
+      .then((r) => setAccessToken(r.data.accessToken))
+      .catch(() => {}); // silent — user just won't have socket token until next login
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <ErrorBoundary>

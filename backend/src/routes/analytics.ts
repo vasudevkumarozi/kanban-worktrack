@@ -4,6 +4,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { ForbiddenError } from '../lib/errors';
 import { sendWeeklyDigest } from '../services/emailDigest';
+import { analyticsLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 router.use(authenticate);
@@ -40,7 +41,7 @@ router.get('/overview', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(asyn
   res.json({ totalUsers, totalProjects, totalTasks, completedTasks, assignedInPeriod, completedInPeriod, period });
 }));
 
-router.get('/employees', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
+router.get('/employees', analyticsLimiter, requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {
   const period = (req.query.period as string) || 'month';
   const { start, end } = getRange(period);
 
@@ -49,15 +50,61 @@ router.get('/employees', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(asy
     select: { id: true, name: true, email: true, department: true, avatar: true },
   });
 
-  const stats = await Promise.all(employees.map(async (emp) => {
-    const [totalAssigned, completedInPeriod, assignedInPeriod, overdue, byPriority] = await Promise.all([
-      prisma.task.count({ where: { assignees: { some: { userId: emp.id } } } }),
-      prisma.task.count({ where: { assignees: { some: { userId: emp.id } }, completedAt: { gte: start, lte: end } } }),
-      prisma.task.count({ where: { assignees: { some: { userId: emp.id } }, createdAt: { gte: start, lte: end } } }),
-      prisma.task.count({ where: { assignees: { some: { userId: emp.id } }, completedAt: null, dueDate: { lt: new Date() } } }),
-      prisma.task.groupBy({ by: ['priority'], where: { assignees: { some: { userId: emp.id } } }, _count: true }),
-    ]);
-    return { ...emp, totalAssigned, completedInPeriod, assignedInPeriod, overdue, byPriority };
+  if (employees.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const employeeIds = employees.map(e => e.id);
+  const idPlaceholders = employeeIds.map(() => '?').join(', ');
+
+  // 5 bulk queries instead of 5×N per-employee queries
+  const [totalAssignedRaw, completedInPeriodRaw, assignedInPeriodRaw, overdueRaw, byPriorityRaw] = await Promise.all([
+    prisma.taskAssignee.groupBy({
+      by: ['userId'],
+      where: { userId: { in: employeeIds } },
+      _count: { userId: true },
+    }),
+    prisma.taskAssignee.groupBy({
+      by: ['userId'],
+      where: { userId: { in: employeeIds }, task: { completedAt: { gte: start, lte: end } } },
+      _count: { userId: true },
+    }),
+    prisma.taskAssignee.groupBy({
+      by: ['userId'],
+      where: { userId: { in: employeeIds }, task: { createdAt: { gte: start, lte: end } } },
+      _count: { userId: true },
+    }),
+    prisma.taskAssignee.groupBy({
+      by: ['userId'],
+      where: { userId: { in: employeeIds }, task: { completedAt: null, dueDate: { lt: new Date() } } },
+      _count: { userId: true },
+    }),
+    prisma.$queryRawUnsafe<{ userId: string; priority: string; count: bigint }[]>(
+      `SELECT ta.userId, t.priority, COUNT(*) as count FROM TaskAssignee ta JOIN Task t ON t.id = ta.taskId WHERE ta.userId IN (${idPlaceholders}) GROUP BY ta.userId, t.priority`,
+      ...employeeIds
+    ),
+  ]);
+
+  // Build O(1) lookup maps
+  const totalMap = new Map(totalAssignedRaw.map(r => [r.userId, r._count.userId]));
+  const completedMap = new Map(completedInPeriodRaw.map(r => [r.userId, r._count.userId]));
+  const assignedMap = new Map(assignedInPeriodRaw.map(r => [r.userId, r._count.userId]));
+  const overdueMap = new Map(overdueRaw.map(r => [r.userId, r._count.userId]));
+
+  const priorityMap = new Map<string, { priority: string; _count: number }[]>();
+  for (const row of byPriorityRaw) {
+    if (!priorityMap.has(row.userId)) priorityMap.set(row.userId, []);
+    priorityMap.get(row.userId)!.push({ priority: row.priority, _count: Number(row.count) });
+  }
+
+  const stats = employees.map(emp => ({
+    ...emp,
+    totalAssigned: totalMap.get(emp.id) ?? 0,
+    completedInPeriod: completedMap.get(emp.id) ?? 0,
+    assignedInPeriod: assignedMap.get(emp.id) ?? 0,
+    overdue: overdueMap.get(emp.id) ?? 0,
+    byPriority: priorityMap.get(emp.id) ?? [],
   }));
 
   res.json(stats);
@@ -219,51 +266,67 @@ router.get('/project/:projectId', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHa
   res.json({ totalTasks, completedTasks, assignedInPeriod, completedInPeriod, byPriority, byMember });
 }));
 
-router.get('/dashboard', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (_req: AuthRequest, res: Response) => {
+router.get('/dashboard', analyticsLimiter, requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (_req: AuthRequest, res: Response) => {
   const today = new Date();
   const todayStart = new Date(today); todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(todayStart.getTime() + 86400000);
   const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay()); weekStart.setHours(0, 0, 0, 0);
   const monthStart = new Date(today); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
 
-  const [dueToday, overdue, completedThisWeek, completedThisMonth, totalUsers, totalProjects] = await Promise.all([
+  // Fetch all scalar data + project list in one round-trip
+  const [dueToday, overdue, completedThisWeek, completedThisMonth, totalUsers, totalProjects, projects, workloadRaw, allUsers] = await Promise.all([
     prisma.task.count({ where: { completedAt: null, dueDate: { gte: todayStart, lt: todayEnd } } }),
     prisma.task.count({ where: { completedAt: null, dueDate: { lt: todayStart } } }),
     prisma.task.count({ where: { completedAt: { gte: weekStart } } }),
     prisma.task.count({ where: { completedAt: { gte: monthStart } } }),
     prisma.user.count({ where: { isActive: true } }),
     prisma.project.count({ where: { status: 'ACTIVE' } }),
+    prisma.project.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.taskAssignee.groupBy({
+      by: ['userId'],
+      where: { task: { completedAt: null } },
+      _count: { userId: true },
+    }),
+    prisma.user.findMany({
+      where: { isActive: true, role: { in: ['EMPLOYEE', 'MANAGER'] } },
+      select: { id: true, name: true, department: true },
+      orderBy: { name: 'asc' },
+    }),
   ]);
 
-  const projects = await prisma.project.findMany({
-    where: { status: 'ACTIVE' },
-    select: { id: true, name: true },
-    orderBy: { name: 'asc' },
-  });
+  // 2 bulk queries instead of 2 per project
+  const projectIds = projects.map(p => p.id);
+  const [tasksByProject, completedByProject] = await Promise.all([
+    prisma.task.groupBy({
+      by: ['projectId'],
+      where: { projectId: { in: projectIds } },
+      _count: { id: true },
+    }),
+    prisma.task.groupBy({
+      by: ['projectId'],
+      where: { projectId: { in: projectIds }, completedAt: { not: null } },
+      _count: { id: true },
+    }),
+  ]);
 
-  const projectsProgress = await Promise.all(projects.map(async (p) => {
-    const [total, completed] = await Promise.all([
-      prisma.task.count({ where: { projectId: p.id } }),
-      prisma.task.count({ where: { projectId: p.id, completedAt: { not: null } } }),
-    ]);
+  const totalByProject = new Map(tasksByProject.map(r => [r.projectId as string, r._count.id]));
+  const completedByProjectMap = new Map(completedByProject.map(r => [r.projectId as string, r._count.id]));
+
+  const projectsProgress = projects.map(p => {
+    const total = totalByProject.get(p.id) ?? 0;
+    const completed = completedByProjectMap.get(p.id) ?? 0;
     return { id: p.id, name: p.name, total, completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };
-  }));
-
-  const workloadRaw = await prisma.taskAssignee.groupBy({
-    by: ['userId'],
-    where: { task: { completedAt: null } },
-    _count: { userId: true },
   });
 
-  const allUsers = await prisma.user.findMany({
-    where: { isActive: true, role: { in: ['EMPLOYEE', 'MANAGER'] } },
-    select: { id: true, name: true, department: true },
-    orderBy: { name: 'asc' },
-  });
-
+  // O(1) Map lookup instead of O(n) .find() per user
+  const workloadMap = new Map(workloadRaw.map(w => [w.userId, w._count.userId]));
   const workload = allUsers.map(u => ({
     ...u,
-    activeTasks: workloadRaw.find(w => w.userId === u.id)?._count.userId ?? 0,
+    activeTasks: workloadMap.get(u.id) ?? 0,
   })).sort((a, b) => b.activeTasks - a.activeTasks);
 
   res.json({ dueToday, overdue, completedThisWeek, completedThisMonth, totalUsers, totalProjects, projectsProgress, workload });

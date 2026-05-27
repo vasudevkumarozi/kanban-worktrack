@@ -46,23 +46,27 @@ export default function DashboardPage() {
   const { data: myTasks = [] } = useQuery<Task[]>({
     queryKey: ['my-tasks'],
     queryFn: () => api.get('/tasks/my').then(r => r.data),
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
     queryFn: () => api.get('/projects').then(r => r.data),
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: dashData } = useQuery<DashboardData>({
     queryKey: ['analytics-dashboard'],
     queryFn: () => api.get('/analytics/dashboard').then(r => r.data),
     enabled: isManager(),
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: trendRaw = [] } = useQuery<TrendPoint[]>({
     queryKey: ['analytics-trend'],
     queryFn: () => api.get('/analytics/completion-trend?days=30').then(r => r.data),
     enabled: isManager(),
+    staleTime: 5 * 60 * 1000,
   });
 
   const activeTasks = myTasks.filter(t => !t.completedAt);

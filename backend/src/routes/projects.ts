@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { NotFoundError, ValidationError } from '../lib/errors';
+import { NotFoundError, ValidationError, ForbiddenError } from '../lib/errors';
 import { getIO } from '../socket';
 
 const router = Router();
@@ -26,6 +26,10 @@ router.get('/', asyncHandler(async (req: AuthRequest, res: Response) => {
 router.get('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
   const project = await prisma.project.findUnique({ where: { id: req.params.id }, include: PROJECT_INCLUDE });
   if (!project) throw new NotFoundError('Project');
+  // Employees can only view projects they are members of
+  if (req.user!.role === 'EMPLOYEE' && !project.members.some((m: any) => m.userId === req.user!.id)) {
+    throw new ForbiddenError();
+  }
   res.json(project);
 }));
 

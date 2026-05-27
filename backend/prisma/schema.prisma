@@ -28,6 +28,20 @@ model User {
   activityLogs       ActivityLog[]
   subtaskAssignments Subtask[]       @relation("SubtaskAssignee")
   attachments        Attachment[]    @relation("AttachmentUploader")
+  refreshTokens      RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
 }
 
 model Project {

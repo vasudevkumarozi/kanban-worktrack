@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { ValidationError } from '../lib/errors';
+import { ValidationError, NotFoundError, ForbiddenError } from '../lib/errors';
 
 const router = Router();
 router.use(authenticate);
@@ -47,8 +47,19 @@ router.patch('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
   res.json(subtask);
 }));
 
-router.delete('/:id', asyncHandler(async (_req: AuthRequest, res: Response) => {
-  await prisma.subtask.delete({ where: { id: _req.params.id } });
+router.delete('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const subtask = await prisma.subtask.findUnique({
+    where: { id: req.params.id },
+    include: { task: { include: { assignees: true } } },
+  });
+  if (!subtask) throw new NotFoundError('Subtask');
+
+  // Employees can only delete subtasks on tasks they are assigned to
+  if (req.user!.role === 'EMPLOYEE' && !subtask.task.assignees.some(a => a.userId === req.user!.id)) {
+    throw new ForbiddenError();
+  }
+
+  await prisma.subtask.delete({ where: { id: req.params.id } });
   res.json({ message: 'Subtask deleted' });
 }));
 

@@ -85,6 +85,7 @@ router.get('/task/:taskId', asyncHandler(async (req: AuthRequest, res: Response)
     where: { taskId: req.params.taskId },
     include: ACTIVITY_INCLUDE,
     orderBy: { createdAt: 'desc' },
+    take: 100,
   });
   res.json(logs.map(log => ({ ...log, message: buildMessage(log) })));
 }));

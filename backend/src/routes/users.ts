@@ -6,6 +6,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { validate } from '../middleware/validate';
 import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from '../lib/errors';
+import { passwordLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 router.use(authenticate);
@@ -84,7 +85,7 @@ router.patch('/:id/toggle-status', requireRole('SUPER_ADMIN', 'MANAGER'), asyncH
   res.json(user);
 }));
 
-router.patch('/:id/password', asyncHandler(async (req: AuthRequest, res: Response) => {
+router.patch('/:id/password', passwordLimiter, asyncHandler(async (req: AuthRequest, res: Response) => {
   const isSelf = req.user!.id === req.params.id;
   const isAdmin = ['SUPER_ADMIN', 'MANAGER'].includes(req.user!.role);
   if (!isSelf && !isAdmin) throw new ForbiddenError('You cannot change another user\'s password');
@@ -92,8 +93,14 @@ router.patch('/:id/password', asyncHandler(async (req: AuthRequest, res: Respons
   const { password } = req.body as { password?: string };
   if (!password || password.length < 8) throw new ValidationError('Password must be at least 8 characters');
 
-  await prisma.user.update({ where: { id: req.params.id }, data: { password: await bcrypt.hash(password, 12) } });
-  res.json({ message: 'Password updated successfully' });
+  // Update password and invalidate all active sessions by wiping refresh tokens.
+  // Existing access tokens expire naturally within 15 min (acceptable window).
+  await Promise.all([
+    prisma.user.update({ where: { id: req.params.id }, data: { password: await bcrypt.hash(password, 12) } }),
+    prisma.refreshToken.deleteMany({ where: { userId: req.params.id } }),
+  ]);
+
+  res.json({ message: 'Password updated. All other sessions have been signed out.' });
 }));
 
 router.delete('/:id', requireRole('SUPER_ADMIN', 'MANAGER'), asyncHandler(async (req: AuthRequest, res: Response) => {

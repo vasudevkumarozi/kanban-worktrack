@@ -7,7 +7,7 @@ import prisma from '../lib/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { uploadLimiter } from '../middleware/rateLimiter';
-import { NotFoundError, ValidationError } from '../lib/errors';
+import { NotFoundError, ValidationError, ForbiddenError } from '../lib/errors';
 
 const router = Router();
 router.use(authenticate);
@@ -33,6 +33,43 @@ const upload = multer({
     else cb(new Error('File type not allowed'));
   },
 });
+
+// Authenticated file download — replaces the public /uploads static directory.
+// Employees must belong to the task's project; managers can access any file.
+router.get('/file/:filename', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { filename } = req.params;
+
+  // Block path traversal attempts
+  if (!filename || /[/\\.]\./.test(filename) || filename.includes('..')) {
+    res.status(400).json({ error: 'Invalid filename', code: 'BAD_REQUEST' });
+    return;
+  }
+
+  const attachment = await prisma.attachment.findFirst({
+    where: { filename },
+    include: {
+      task: {
+        include: {
+          project: { include: { members: { select: { userId: true } } } },
+        },
+      },
+    },
+  });
+  if (!attachment) throw new NotFoundError('Attachment');
+
+  // Employees must be project members to download
+  if (req.user!.role === 'EMPLOYEE') {
+    const isMember = attachment.task.project.members.some(m => m.userId === req.user!.id);
+    if (!isMember) throw new ForbiddenError();
+  }
+
+  const filePath = path.join(UPLOAD_DIR, filename);
+  if (!fs.existsSync(filePath)) throw new NotFoundError('File not found on disk');
+
+  res.setHeader('Content-Type', attachment.mimeType);
+  res.setHeader('Content-Disposition', `inline; filename="${attachment.originalName}"`);
+  res.sendFile(filePath);
+}));
 
 router.get('/task/:taskId', asyncHandler(async (req: AuthRequest, res: Response) => {
   const attachments = await prisma.attachment.findMany({
@@ -66,6 +103,11 @@ router.post('/upload', uploadLimiter, upload.single('file'), asyncHandler(async 
 router.delete('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
   const attachment = await prisma.attachment.findUnique({ where: { id: req.params.id } });
   if (!attachment) throw new NotFoundError('Attachment');
+
+  // Employees can only delete their own uploads; managers/admins can delete any
+  if (req.user!.role === 'EMPLOYEE' && attachment.uploadedById !== req.user!.id) {
+    throw new ForbiddenError();
+  }
 
   const filePath = path.join(UPLOAD_DIR, attachment.filename);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);

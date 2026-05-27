@@ -5,23 +5,30 @@ import { GoogleLogin } from '@react-oauth/google';
 import api from '../../api/client';
 import { useAuthStore } from '../../store/auth.store';
 import toast from 'react-hot-toast';
+import { User } from '../../types';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { setAuth, token } = useAuthStore();
+  const { setUser, setAccessToken, user } = useAuthStore();
   const navigate = useNavigate();
 
-  if (token) { navigate('/dashboard'); return null; }
+  // Already authenticated — redirect away from login
+  if (user) { navigate('/dashboard'); return null; }
+
+  const handleAuth = (data: { user: User; accessToken: string }) => {
+    setUser(data.user);
+    setAccessToken(data.accessToken); // in-memory only, for socket.io
+    navigate('/dashboard');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/login', { email, password });
-      setAuth(data.user, data.token);
-      navigate('/dashboard');
+      const { data } = await api.post<{ user: User; accessToken: string }>('/auth/login', { email, password });
+      handleAuth(data);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Login failed');
     } finally {
@@ -33,9 +40,8 @@ export default function LoginPage() {
     if (!credentialResponse.credential) return;
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/google', { credential: credentialResponse.credential });
-      setAuth(data.user, data.token);
-      navigate('/dashboard');
+      const { data } = await api.post<{ user: User; accessToken: string }>('/auth/google', { credential: credentialResponse.credential });
+      handleAuth(data);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Google login failed');
     } finally {

@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -35,6 +36,9 @@ if (missing.length) {
 }
 
 const app = express();
+// Trust the first hop from a reverse proxy (Render, Railway, Heroku, Vercel, etc.)
+// Without this, req.ip is always 127.0.0.1 — rate limits would be shared across ALL users.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -54,6 +58,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
 }));
 
+// ── Cookie parsing ────────────────────────────────────────────────────────────
+app.use(cookieParser());
+
 // ── Performance ───────────────────────────────────────────────────────────────
 app.use(compression());
 
@@ -66,14 +73,14 @@ app.use(
 );
 
 // ── Body parsing ─────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // ── Rate limiting (global) ────────────────────────────────────────────────────
 app.use('/api', apiLimiter);
 
-// ── Static files ──────────────────────────────────────────────────────────────
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// /uploads is no longer served as a public static directory.
+// Files are served through the authenticated GET /api/attachments/file/:filename route.
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {

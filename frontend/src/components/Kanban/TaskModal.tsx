@@ -20,7 +20,8 @@ interface Props {
 
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const MAX_ASSIGNEES = 4;
-const BACKEND = 'http://localhost:3001';
+// All file downloads go through the authenticated API route (no public /uploads access)
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
 
 type Tab = 'details' | 'subtasks' | 'attachments' | 'comments' | 'activity';
 
@@ -328,12 +329,12 @@ export default function TaskModal({ open, onClose, task, projectId, columnId, on
               <div key={a.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl hover:bg-gray-50 group">
                 {fileIcon(a.mimeType)}
                 <div className="flex-1 min-w-0">
-                  <a href={`${BACKEND}${a.url}`} target="_blank" rel="noopener noreferrer"
+                  <a href={`${API_BASE}/attachments/file/${a.filename}`} target="_blank" rel="noopener noreferrer"
                     className="text-sm font-medium text-gray-800 hover:text-primary-600 truncate block">{a.originalName}</a>
                   <p className="text-xs text-gray-400">{formatBytes(a.size)} · {a.uploadedBy.name} · {format(new Date(a.createdAt), 'MMM d, yyyy')}</p>
                 </div>
                 {a.mimeType.startsWith('image/') && (
-                  <img src={`${BACKEND}${a.url}`} alt={a.originalName} className="w-10 h-10 rounded object-cover border border-gray-100 shrink-0" />
+                  <img src={`${API_BASE}/attachments/file/${a.filename}`} alt={a.originalName} className="w-10 h-10 rounded object-cover border border-gray-100 shrink-0" />
                 )}
                 <button onClick={() => deleteAttachmentMutation.mutate(a.id)} className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 rounded text-gray-300 hover:text-red-500 shrink-0">
                   <Trash2 size={14} />

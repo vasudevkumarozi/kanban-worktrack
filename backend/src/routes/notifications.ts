@@ -26,8 +26,9 @@ router.patch('/read-all', asyncHandler(async (req: AuthRequest, res: Response) =
 }));
 
 router.patch('/:id/read', asyncHandler(async (req: AuthRequest, res: Response) => {
-  await prisma.notification.update({
-    where: { id: req.params.id },
+  // updateMany with userId ensures user can only mark their own notifications
+  await prisma.notification.updateMany({
+    where: { id: req.params.id, userId: req.user!.id },
     data: { read: true },
   });
   res.json({ message: 'Notification marked as read' });
