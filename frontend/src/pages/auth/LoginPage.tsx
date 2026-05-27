@@ -20,7 +20,10 @@ export default function LoginPage() {
   const handleAuth = (data: { user: User; accessToken: string }) => {
     setUser(data.user);
     setAccessToken(data.accessToken); // in-memory only, for socket.io
-    navigate('/dashboard');
+    // Full page reload instead of SPA navigate — cancels any stale /auth/me
+    // requests that were in-flight before login, preventing them from racing
+    // with the interceptor's refresh and triggering a spurious logout.
+    window.location.href = '/dashboard';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

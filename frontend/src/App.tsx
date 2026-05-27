@@ -49,7 +49,11 @@ export default function App() {
     // so no in-memory token is needed on page load.
     api.get<{ accessToken?: string }>('/auth/me')
       .then((r) => setUser(r.data as any))
-      .catch(() => setUser(null));
+      .catch(() => {
+        // Only clear user if login hasn't already set it (prevents race where
+        // a stale /auth/me 401 overwrites the user set by a concurrent login).
+        if (!useAuthStore.getState().user) setUser(null);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
